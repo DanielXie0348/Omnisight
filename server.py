@@ -10,13 +10,17 @@ import base64
 from collections import deque
 import serial
 
-model = YOLO("yolov8n.pt")
+model = YOLO("yolov8n.pt") # Start of setup section
 model.fuse()
 
-ser = serial.Serial('COM3', 9600, timeout=1) # setting up arduino
-time.sleep(2)
+H = np.load("homography_matrix.npy")
 
-latest_frame = None
+ser = serial.Serial('COM3', 9600, timeout=1)
+time.sleep(2)
+print("Arduino connected")
+# -----------------------------------------------------------------
+
+latest_frame = None # shared state section (important vals)
 frame_lock = threading.Lock()
 state_lock = threading.Lock()
 clients = set()
@@ -29,21 +33,27 @@ state = {
     "frame_b64": None,
 }
 
-def camera_thread(): # pulls frame from camera
+# --------------------------------------
+
+def camera_thread(): # camera thread, for connection between devices
     global latest_frame
     cap = cv2.VideoCapture(1)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
     cap.set(cv2.CAP_PROP_FPS, 30)
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    print("Camera started")
     while True:
         ret, frame = cap.read()
         if ret:
             with frame_lock:
                 latest_frame = frame
 
-def detection_thread(): # runs yolo on every frame
-    fps_history = deque(maxlen=30) # dequeues so doesn't get built up
+# ----------------------------------------------
+
+def detection_thread(): # full detection thread for detecting a person in the danger zone
+    fps_history = deque(maxlen=30)
+    last_cmd = None
 
     while True:
         with frame_lock:
@@ -52,60 +62,70 @@ def detection_thread(): # runs yolo on every frame
             time.sleep(0.01)
             continue
 
-        t0 = time.perf_counter() # start time
-        results = model(frame, imgsz=256, verbose=False) # measuring times
-        t1 = time.perf_counter() # end time
-        inference_ms = round((t1 - t0) * 1000, 1) # s to ms
+        t0 = time.perf_counter()
+        results = model(frame, imgsz=256, verbose=False)
+        t1 = time.perf_counter()
+        inference_ms = round((t1 - t0) * 1000, 1) 
 
         persons = []
         any_danger = False
 
-        for result in results: # start of person detection loop
+        for result in results:
             for box in result.boxes:
-                if int(box.cls[0]) != 0: # if not a person, skips the rest of the loop
+                if int(box.cls[0]) != 0:
                     continue
 
                 x1, y1, x2, y2 = map(int, box.xyxy[0])
                 cx = (x1 + x2) // 2
-                cy = y2 # uses foot point for measurements
+                cy = y2
 
-                mx = int((cx / 640) * 600)
-                my = int((cy / 480) * 400)
-                mx = max(0, min(599, mx))
-                my = max(0, min(399, my))
+                # Homography transform
+                pt = np.float32([[[cx, cy]]])
+                mapped = cv2.perspectiveTransform(pt, H)
+                mx = float(mapped[0][0][0])
+                my = float(mapped[0][0][1])
 
-                in_danger = (150 <= mx <= 450) and (200 <= my <= 400)
+                # filters out readings outside the calibration area so it does not interfere
+                if mx < -5 or mx > 38 or my < -5 or my > 23:
+                    continue
+
+                # setting the official danger zone
+                in_danger = (0 <= mx <= 4) and (18 <= my <= 22)
+
                 if in_danger:
                     any_danger = True
 
                 persons.append({
                     "bbox": [x1, y1, x2, y2],
-                    "map": [mx, my],
+                    "map": [round(mx, 1), round(my, 1)],
                     "danger": in_danger,
                     "conf": round(float(box.conf[0]), 2)
                 })
+
+        # arduino block for moving the servo to s (stop) or g (go)
+        cmd = 'S' if any_danger else 'G'
+        if cmd != last_cmd:
+            ser.write(cmd.encode())
+            last_cmd = cmd
 
         fps_history.append(t1 - t0)
         fps = round(1 / (sum(fps_history) / len(fps_history)), 1)
 
         _, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 60])
-        frame_b64 = base64.b64encode(jpeg.tobytes()).decode('utf-8') # compresses to 60% quality for websocket
+        frame_b64 = base64.b64encode(jpeg.tobytes()).decode('utf-8')
 
-        time_serial = time.perf_counter()
-        if any_danger:
-            ser.write(b'S')
-        else:
-            ser.write(b'G')
-        time_serial_done = time.perf_counter()
-        serial_ms = round((time_serial_done - time_serial) * 1000, 1)
-            
-        with state_lock:
+        # debug
+        for p in persons:
+            print(f"  mx={p['map'][0]}, my={p['map'][1]} → {'DANGER' if p['danger'] else 'SAFE'}")
+
+        with state_lock: # posting information on the UI (html)
             state["status"] = "DANGER" if any_danger else "SAFE"
             state["fps"] = fps
             state["inference_ms"] = inference_ms
             state["persons"] = persons
             state["frame_b64"] = frame_b64
 
+# for handling the websocket setup
 async def ws_handler(websocket):
     clients.add(websocket)
     try:
@@ -138,5 +158,5 @@ threading.Thread(target=camera_thread, daemon=True).start()
 threading.Thread(target=detection_thread, daemon=True).start()
 time.sleep(1)
 
-print("OmniSight server running — open dashboard.html in Chrome")
+print("\nOmniSight running — open dashboard.html in Chrome\n")
 asyncio.run(main())

@@ -55,7 +55,7 @@
   }
 
   #status-bar.safe   { background: rgba(0,229,160,0.08); color: #00e5a0; }
-  #status-bar.danger { background: rgba(255,60,92,0.12);  color: #ff3c5c; animation: flash 0.4s infinite alternate; }
+  #status-bar.danger { background: rgba(255,60,92,0.12); color: #ff3c5c; animation: flash 0.4s infinite alternate; }
   #status-bar.disconnected { background: transparent; color: #4a5568; }
 
   @keyframes flash {
@@ -215,18 +215,32 @@
 const WS = 'ws://localhost:8765';
 let ws, lastStatus = null;
 
-// Clock
+// ── CLOCK ──────────────────────────────────────────────────────────────────────
 setInterval(() => {
   document.getElementById('clock').textContent =
     new Date().toLocaleTimeString('en-CA', {hour12: false});
 }, 500);
 
-// Map
+// ── MAP ────────────────────────────────────────────────────────────────────────
 const mapCanvas = document.getElementById('map');
 const ctx = mapCanvas.getContext('2d');
 
+// Real desk dimensions in cm
+const DESK_W = 36;
+const DESK_H = 22;
+
+// Danger zone in cm — must match server.py in_danger check
+const DZ_X = 0;
+const DZ_Y = 16;
+const DZ_W = 8;
+const DZ_H = 6;
+
 function drawMap(persons) {
-  const W = mapCanvas.width, H = mapCanvas.height;
+  const W = mapCanvas.width;
+  const H = mapCanvas.height;
+  const sx = W / DESK_W;
+  const sy = H / DESK_H;
+
   ctx.clearRect(0, 0, W, H);
 
   // Background
@@ -236,51 +250,65 @@ function drawMap(persons) {
   // Grid
   ctx.strokeStyle = 'rgba(28,35,51,0.8)';
   ctx.lineWidth = 1;
-  for (let x = 0; x < W; x += 48) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke(); }
-  for (let y = 0; y < H; y += 40) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
+  for (let x = 0; x <= W; x += sx * 4) {
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+  }
+  for (let y = 0; y <= H; y += sy * 4) {
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+  }
 
-  // Danger zone — scale from 600x400 map coords to canvas size
-  const sx = W / 600, sy = H / 400;
+  // Danger zone
   ctx.fillStyle = 'rgba(255,60,92,0.15)';
-  ctx.fillRect(150*sx, 200*sy, 300*sx, 200*sy);
+  ctx.fillRect(DZ_X * sx, DZ_Y * sy, DZ_W * sx, DZ_H * sy);
   ctx.strokeStyle = 'rgba(255,60,92,0.7)';
   ctx.lineWidth = 1.5;
-  ctx.strokeRect(150*sx, 200*sy, 300*sx, 200*sy);
-  ctx.fillStyle = 'rgba(255,60,92,0.7)';
+  ctx.strokeRect(DZ_X * sx, DZ_Y * sy, DZ_W * sx, DZ_H * sy);
+  ctx.fillStyle = 'rgba(255,60,92,0.8)';
   ctx.font = '9px "Share Tech Mono"';
-  ctx.fillText('⚠ DANGER', 155*sx, 215*sy);
+  ctx.fillText('⚠ DANGER', DZ_X * sx + 4, DZ_Y * sy + 13);
+
+  // Desk boundary
+  ctx.strokeStyle = 'rgba(0,180,216,0.2)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(1, 1, W - 2, H - 2);
 
   // Persons
   persons.forEach((p, i) => {
     const px = p.map[0] * sx;
     const py = p.map[1] * sy;
     const color = p.danger ? '#ff3c5c' : '#00e5a0';
+    const glow  = p.danger ? 'rgba(255,60,92,0.4)' : 'rgba(0,229,160,0.3)';
 
     // Glow
     const g = ctx.createRadialGradient(px, py, 0, px, py, 16);
-    g.addColorStop(0, p.danger ? 'rgba(255,60,92,0.4)' : 'rgba(0,229,160,0.3)');
+    g.addColorStop(0, glow);
     g.addColorStop(1, 'transparent');
-    ctx.beginPath(); ctx.arc(px, py, 16, 0, Math.PI*2);
-    ctx.fillStyle = g; ctx.fill();
+    ctx.beginPath();
+    ctx.arc(px, py, 16, 0, Math.PI * 2);
+    ctx.fillStyle = g;
+    ctx.fill();
 
     // Dot
-    ctx.beginPath(); ctx.arc(px, py, 6, 0, Math.PI*2);
-    ctx.fillStyle = color; ctx.fill();
+    ctx.beginPath();
+    ctx.arc(px, py, 6, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.fill();
 
     // Label
     ctx.fillStyle = color;
     ctx.font = '9px "Share Tech Mono"';
-    ctx.fillText(`P${i+1}`, px+9, py-3);
+    ctx.fillText(`P${i + 1}`, px + 9, py - 3);
+    ctx.fillStyle = 'rgba(255,255,255,0.3)';
+    ctx.fillText(`${p.map[0]},${p.map[1]}`, px + 9, py + 9);
   });
 }
 
+// ── UPDATE ─────────────────────────────────────────────────────────────────────
 function update(data) {
-  // Camera feed
   if (data.frame_b64) {
     document.getElementById('camera-img').src = 'data:image/jpeg;base64,' + data.frame_b64;
   }
 
-  // Status bar
   const bar = document.getElementById('status-bar');
   if (data.status !== lastStatus) {
     bar.className = data.status.toLowerCase();
@@ -288,7 +316,6 @@ function update(data) {
     lastStatus = data.status;
   }
 
-  // Metrics
   const fps = data.fps;
   const fpsEl = document.getElementById('fps');
   fpsEl.textContent = fps;
@@ -304,10 +331,10 @@ function update(data) {
   sm.textContent = data.status;
   sm.className = 'metric-value ' + (data.status === 'DANGER' ? 'red' : 'green');
 
-  // Map
   drawMap(data.persons);
 }
 
+// ── WEBSOCKET ──────────────────────────────────────────────────────────────────
 function connect() {
   ws = new WebSocket(WS);
 
