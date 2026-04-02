@@ -8,8 +8,13 @@ import websockets
 import json
 import base64
 from collections import deque
+import serial
 
 model = YOLO("yolov8n.pt")
+model.fuse()
+
+ser = serial.Serial('COM3', 9600, timeout=1) # setting up arduino
+time.sleep(2)
 
 latest_frame = None
 frame_lock = threading.Lock()
@@ -48,7 +53,7 @@ def detection_thread(): # runs yolo on every frame
             continue
 
         t0 = time.perf_counter() # start time
-        results = model(frame, imgsz=320, verbose=False) # measuring times
+        results = model(frame, imgsz=256, verbose=False) # measuring times
         t1 = time.perf_counter() # end time
         inference_ms = round((t1 - t0) * 1000, 1) # s to ms
 
@@ -86,6 +91,14 @@ def detection_thread(): # runs yolo on every frame
         _, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 60])
         frame_b64 = base64.b64encode(jpeg.tobytes()).decode('utf-8') # compresses to 60% quality for websocket
 
+        time_serial = time.perf_counter()
+        if any_danger:
+            ser.write(b'S')
+        else:
+            ser.write(b'G')
+        time_serial_done = time.perf_counter()
+        serial_ms = round((time_serial_done - time_serial) * 1000, 1)
+            
         with state_lock:
             state["status"] = "DANGER" if any_danger else "SAFE"
             state["fps"] = fps

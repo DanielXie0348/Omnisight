@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>OmniSight</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow+Condensed:wght@400;700;900&display=swap');
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: #080b10;
+    color: #c9d1d9;
+    font-family: 'Barlow Condensed', sans-serif;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 24px;
+    border-bottom: 1px solid #1c2333;
+    flex-shrink: 0;
+  }
+
+  .logo {
+    font-size: 22px;
+    font-weight: 900;
+    letter-spacing: 0.15em;
+    color: #fff;
+  }
+
+  .logo span { color: #00b4d8; }
+
+  .header-meta {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 11px;
+    color: #4a5568;
+    letter-spacing: 0.15em;
+  }
+
+  #status-bar {
+    padding: 8px 24px;
+    text-align: center;
+    font-size: 24px;
+    font-weight: 700;
+    letter-spacing: 0.3em;
+    border-bottom: 1px solid #1c2333;
+    transition: all 0.15s;
+    flex-shrink: 0;
+  }
+
+  #status-bar.safe   { background: rgba(0,229,160,0.08); color: #00e5a0; }
+  #status-bar.danger { background: rgba(255,60,92,0.12);  color: #ff3c5c; animation: flash 0.4s infinite alternate; }
+  #status-bar.disconnected { background: transparent; color: #4a5568; }
+
+  @keyframes flash {
+    from { background: rgba(255,60,92,0.08); }
+    to   { background: rgba(255,60,92,0.2); }
+  }
+
+  .content {
+    display: grid;
+    grid-template-columns: 1fr 320px;
+    flex: 1;
+    gap: 1px;
+    background: #111820;
+    overflow: hidden;
+  }
+
+  .panel {
+    background: #0d1117;
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .panel-label {
+    position: absolute;
+    top: 10px; left: 12px;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 10px;
+    color: #4a5568;
+    letter-spacing: 0.2em;
+    z-index: 10;
+  }
+
+  #camera-img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+
+  .sidebar {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    background: #111820;
+  }
+
+  .sidebar-panel {
+    background: #0d1117;
+    padding: 32px 16px 16px;
+    position: relative;
+    flex: 1;
+  }
+
+  canvas#map {
+    width: 100%;
+    border: 1px solid #1c2333;
+    display: block;
+    background: #080d14;
+  }
+
+  .metrics {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .metric {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 12px;
+    border: 1px solid #111820;
+    background: rgba(255,255,255,0.02);
+  }
+
+  .metric-label {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 10px;
+    color: #4a5568;
+    letter-spacing: 0.15em;
+  }
+
+  .metric-value {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 18px;
+    color: #c9d1d9;
+  }
+
+  .metric-value.green { color: #00e5a0; }
+  .metric-value.red   { color: #ff3c5c; }
+  .metric-value.blue  { color: #00b4d8; }
+
+  .ws-dot {
+    display: inline-block;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: #333;
+    margin-right: 6px;
+    vertical-align: middle;
+  }
+  .ws-dot.on { background: #00e5a0; box-shadow: 0 0 6px #00e5a0; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">Omni<span>Sight</span></div>
+  <div class="header-meta">
+    <span class="ws-dot" id="ws-dot"></span>
+    <span id="ws-label">DISCONNECTED</span>
+    &nbsp;&nbsp;|&nbsp;&nbsp;
+    <span id="clock">--:--:--</span>
+  </div>
+</header>
+
+<div id="status-bar" class="disconnected">◈ &nbsp; CONNECTING &nbsp; ◈</div>
+
+<div class="content">
+  <div class="panel">
+    <div class="panel-label">▶ CAMERA FEED</div>
+    <img id="camera-img" alt="feed">
+  </div>
+
+  <div class="sidebar">
+    <div class="sidebar-panel">
+      <div class="panel-label">◉ FLOOR MAP</div>
+      <canvas id="map" width="288" height="200"></canvas>
+    </div>
+
+    <div class="sidebar-panel">
+      <div class="panel-label">≡ METRICS</div>
+      <div class="metrics">
+        <div class="metric">
+          <div class="metric-label">FPS</div>
+          <div class="metric-value blue" id="fps">—</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">INFERENCE</div>
+          <div class="metric-value" id="infer">—</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">PERSONS</div>
+          <div class="metric-value" id="persons">0</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">STATUS</div>
+          <div class="metric-value" id="status-metric">—</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const WS = 'ws://localhost:8765';
+let ws, lastStatus = null;
+
+// Clock
+setInterval(() => {
+  document.getElementById('clock').textContent =
+    new Date().toLocaleTimeString('en-CA', {hour12: false});
+}, 500);
+
+// Map
+const mapCanvas = document.getElementById('map');
+const ctx = mapCanvas.getContext('2d');
+
+function drawMap(persons) {
+  const W = mapCanvas.width, H = mapCanvas.height;
+  ctx.clearRect(0, 0, W, H);
+
+  // Background
+  ctx.fillStyle = '#080d14';
+  ctx.fillRect(0, 0, W, H);
+
+  // Grid
+  ctx.strokeStyle = 'rgba(28,35,51,0.8)';
+  ctx.lineWidth = 1;
+  for (let x = 0; x < W; x += 48) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke(); }
+  for (let y = 0; y < H; y += 40) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
+
+  // Danger zone — scale from 600x400 map coords to canvas size
+  const sx = W / 600, sy = H / 400;
+  ctx.fillStyle = 'rgba(255,60,92,0.15)';
+  ctx.fillRect(150*sx, 200*sy, 300*sx, 200*sy);
+  ctx.strokeStyle = 'rgba(255,60,92,0.7)';
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(150*sx, 200*sy, 300*sx, 200*sy);
+  ctx.fillStyle = 'rgba(255,60,92,0.7)';
+  ctx.font = '9px "Share Tech Mono"';
+  ctx.fillText('⚠ DANGER', 155*sx, 215*sy);
+
+  // Persons
+  persons.forEach((p, i) => {
+    const px = p.map[0] * sx;
+    const py = p.map[1] * sy;
+    const color = p.danger ? '#ff3c5c' : '#00e5a0';
+
+    // Glow
+    const g = ctx.createRadialGradient(px, py, 0, px, py, 16);
+    g.addColorStop(0, p.danger ? 'rgba(255,60,92,0.4)' : 'rgba(0,229,160,0.3)');
+    g.addColorStop(1, 'transparent');
+    ctx.beginPath(); ctx.arc(px, py, 16, 0, Math.PI*2);
+    ctx.fillStyle = g; ctx.fill();
+
+    // Dot
+    ctx.beginPath(); ctx.arc(px, py, 6, 0, Math.PI*2);
+    ctx.fillStyle = color; ctx.fill();
+
+    // Label
+    ctx.fillStyle = color;
+    ctx.font = '9px "Share Tech Mono"';
+    ctx.fillText(`P${i+1}`, px+9, py-3);
+  });
+}
+
+function update(data) {
+  // Camera feed
+  if (data.frame_b64) {
+    document.getElementById('camera-img').src = 'data:image/jpeg;base64,' + data.frame_b64;
+  }
+
+  // Status bar
+  const bar = document.getElementById('status-bar');
+  if (data.status !== lastStatus) {
+    bar.className = data.status.toLowerCase();
+    bar.textContent = `◈  ${data.status}  ◈`;
+    lastStatus = data.status;
+  }
+
+  // Metrics
+  const fps = data.fps;
+  const fpsEl = document.getElementById('fps');
+  fpsEl.textContent = fps;
+  fpsEl.className = 'metric-value ' + (fps > 20 ? 'green' : fps > 10 ? '' : 'red');
+
+  document.getElementById('infer').textContent = data.inference_ms + 'ms';
+
+  const pc = document.getElementById('persons');
+  pc.textContent = data.persons.length;
+  pc.className = 'metric-value ' + (data.persons.some(p => p.danger) ? 'red' : 'green');
+
+  const sm = document.getElementById('status-metric');
+  sm.textContent = data.status;
+  sm.className = 'metric-value ' + (data.status === 'DANGER' ? 'red' : 'green');
+
+  // Map
+  drawMap(data.persons);
+}
+
+function connect() {
+  ws = new WebSocket(WS);
+
+  ws.onopen = () => {
+    document.getElementById('ws-dot').className = 'ws-dot on';
+    document.getElementById('ws-label').textContent = 'CONNECTED';
+    document.getElementById('status-bar').className = 'safe';
+  };
+
+  ws.onmessage = e => {
+    try { update(JSON.parse(e.data)); } catch(err) {}
+  };
+
+  ws.onclose = () => {
+    document.getElementById('ws-dot').className = 'ws-dot';
+    document.getElementById('ws-label').textContent = 'DISCONNECTED';
+    document.getElementById('status-bar').className = 'disconnected';
+    document.getElementById('status-bar').textContent = '◈  DISCONNECTED  ◈';
+    lastStatus = null;
+    setTimeout(connect, 2000);
+  };
+}
+
+drawMap([]);
+connect();
+</script>
+</body>
+</html>
